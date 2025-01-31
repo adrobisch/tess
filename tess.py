@@ -6,7 +6,6 @@ import requests
 from io import StringIO
 
 # Example ASCII "shapes" for each piece. 
-# Adjust as desired.
 ASCII_PIECES = {
     'P': [
         " ^ ",
@@ -97,9 +96,7 @@ def draw_piece_ascii(stdscr, piece_char, x, y, cell_width, cell_height, bg_color
                 bg_color
             )
 
-def draw_board_common(
-    stdscr, board, cell_width, cell_height
-):
+def draw_board_common(stdscr, board, cell_width, cell_height):
     """
     A helper that draws the board and returns the (prompt_y) row
     we should write prompts at. 
@@ -225,16 +222,11 @@ def draw_puzzle_game(stdscr, board, puzzle_solution, cell_width=None, cell_heigh
         if prompt_y < 0:
             return  # Board didn't fit
 
-        # If the side to move matches the side that the next puzzle move belongs to,
-        # we ask the user to input that move.
-        # But we only check the next puzzle move if it is indeed from the color to move.
-        # puzzle_solution is strictly sequential: White's move, Black's move, etc.
-        # If the next puzzle move is for the *other* color, we just auto-play it.
-
         next_move_uci = puzzle_solution[solution_index]
         next_move = chess.Move.from_uci(next_move_uci)
         
-        # If the board's turn matches the next puzzle move's color, we prompt user
+        # Check if it's the correct side to move for the next puzzle move.
+        # If yes, prompt the user; if not, auto-play it.
         if board.turn == (board.color_at(next_move.from_square) == chess.WHITE):
             # Prompt user
             color_str = "White" if board.turn else "Black"
@@ -260,10 +252,9 @@ def draw_puzzle_game(stdscr, board, puzzle_solution, cell_width=None, cell_heigh
                     f"Incorrect move. The puzzle solution expects {next_move_uci}. Press any key.")
                 stdscr.refresh()
                 stdscr.getch()
-                return  # You can instead allow retrial or exit puzzle
+                return
         else:
-            # It's not this side's move. So the puzzle solution suggests
-            # that the opposite color should move. We auto-play that move.
+            # Opponent move; auto-play it
             board.push(next_move)
             solution_index += 1
 
@@ -272,7 +263,6 @@ def draw_puzzle_game(stdscr, board, puzzle_solution, cell_width=None, cell_heigh
     stdscr.addstr(0, 0, "Puzzle solved! Press any key to exit.")
     stdscr.refresh()
     stdscr.getch()
-
 
 def load_random_puzzle():
     """
@@ -289,7 +279,7 @@ def load_random_puzzle():
 
     puzzle_solution = puzzle_data["solution"]  # e.g. ["d1a4","d8d7","a4e4"]
     pgn = game_data["pgn"]                    # the PGN that leads up to puzzle
-    initial_ply = puzzle_data["initialPly"]   # half-move index
+    initial_ply = puzzle_data["initialPly"]   # half-move index (1-based)
 
     # Parse the PGN with python-chess
     pgn_io = StringIO(pgn)
@@ -298,8 +288,11 @@ def load_random_puzzle():
 
     # The game.mainline_moves() is a generator of all moves.
     moves = list(game.mainline_moves())
-    # Push moves up to initialPly
-    for i in range(initial_ply):
+    
+    # Push exactly initial_ply - 1 moves (so that the puzzle starts at move #initialPly).
+    # Also make sure we don't exceed the total length of the PGN.
+    to_push = min(max(initial_ply - 1, 0), len(moves))
+    for i in range(to_push):
         board.push(moves[i])
 
     return board, puzzle_solution
