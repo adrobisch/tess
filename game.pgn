@@ -1,0 +1,11 @@
+[Event "Example Game"]
+[Site "Example Site"]
+[Date "2023.10.01"]
+[Round "1"]
+[White "Player A"]
+[Black "Player B"]
+[Result "1-0"]
+
+1. e4 e5 2. Nf3 Nc6 3. d4 exd4 4. Nxd4 Nf6 5. Nc3 Bb4 6. e5 Bxc3 7. bxc3 Nxe4 8. O-O Nxc3 9. Qd4 d5 10. Qxc3 dxe4 11. Qxe5+ Qe7 12. Qxh8
+
+1-0
