@@ -7,7 +7,14 @@ PIECE_UNICODE = {
     'p': '♟', 'n': '♞', 'b': '♝', 'r': '♜', 'q': '♛', 'k': '♚'
 }
 
+def init_colors():
+    curses.start_color()
+    curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_MAGENTA)  # Pink background
+    curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_YELLOW)  # Yellow background
+
 def draw_chessboard(stdscr, board):
+    init_colors()
+
     while not board.is_game_over():
         # Clear screen
         stdscr.clear()
@@ -32,9 +39,9 @@ def draw_chessboard(stdscr, board):
                 y = row * cell_height + 1  # Add offset for rank indicators on the top
                 piece = board.piece_at(chess.square(col, 7 - row))
                 if (row + col) % 2 == 0:
-                    bg_color = curses.A_REVERSE
+                    bg_color = curses.color_pair(2)  # Yellow background
                 else:
-                    bg_color = curses.A_NORMAL
+                    bg_color = curses.color_pair(1)  # Pink background
                 stdscr.addstr(y, x, '  ', bg_color)
                 if piece:
                     stdscr.addstr(y, x, PIECE_UNICODE[piece.symbol()], bg_color)
