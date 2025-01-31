@@ -1,0 +1,21 @@
+[package]
+name = "tess-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Terminal UI
+ratatui = "0.28"
+crossterm = "0.28"
+
+# Chess logic
+shakmaty = "0.27"
+
+# For fetching puzzles from lichess
+reqwest = { version = "0.11", features = ["json", "blocking"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# For reading PGN
+pgn-reader = { version = "0.26" }
+anyhow = "1"
