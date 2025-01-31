@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-
 import curses
 import chess
 import chess.pgn
+import requests
+from io import StringIO
 
-# Example ASCII "shapes" for each piece. Here, each shape is a list of text
-# lines. You can adjust these to your liking—larger shapes, different designs, etc.
-# At minimum, each piece has a 3×3 shape in this example. Adjust as you see fit!
+# Example ASCII "shapes" for each piece. 
+# Adjust as desired.
 ASCII_PIECES = {
     'P': [
         " ^ ",
@@ -16,7 +16,8 @@ ASCII_PIECES = {
     'N': [
         " __",
         "/ N",
-        "\\_/"],
+        "\\_/"
+    ],
     'B': [
         "  ^",
         " /B\\",
@@ -37,8 +38,7 @@ ASCII_PIECES = {
         "(. )",
         " | "
     ],
-
-    # Black pieces – you can tweak these to look different if you want
+    # Black pieces
     'p': [
         " ^ ",
         "(p)",
@@ -73,33 +73,23 @@ ASCII_PIECES = {
 
 def init_colors():
     curses.start_color()
-    curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_MAGENTA) # Pink squares (white on magenta)
-    curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_YELLOW) # Yellow squares (black on yellow)
+    curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_MAGENTA)  # Pink squares
+    curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_YELLOW)   # Yellow squares
 
 def draw_piece_ascii(stdscr, piece_char, x, y, cell_width, cell_height, bg_color):
     """
-    Draws the ASCII art for a given piece inside the cell at (x, y).
-    piece_char is something like 'P', 'k', 'Q', etc.
-    The ASCII art defined in ASCII_PIECES is placed in the center (if possible),
-    or truncated/padded if cell_width / cell_height are small or large.
+    Draws ASCII art for a given piece in a cell at (x, y).
     """
     shape = ASCII_PIECES.get(piece_char)
     if not shape:
-        # No shape defined, just return
         return
-    
     shape_height = len(shape)
     shape_width = max(len(line) for line in shape)
-
-    # Top-left offsets so we can center the piece if there's extra space
     offset_y = (cell_height - shape_height) // 2
     offset_x = (cell_width - shape_width) // 2
-    
     for row_idx, row_text in enumerate(shape):
-        # If the cell is smaller than the shape, we may need to clip
         if 0 <= offset_y + row_idx < cell_height:
-            # Clip row_text if it’s longer than cell_width
-            clipped = row_text[:cell_width]  
+            clipped = row_text[:cell_width]
             stdscr.addstr(
                 y + offset_y + row_idx,
                 x + offset_x,
@@ -107,96 +97,97 @@ def draw_piece_ascii(stdscr, piece_char, x, y, cell_width, cell_height, bg_color
                 bg_color
             )
 
-def draw_chessboard(stdscr, board, cell_width=None, cell_height=None):
+def draw_board_common(
+    stdscr, board, cell_width, cell_height
+):
     """
-    Draws the chessboard in the terminal using curses, but uses
-    ASCII art to fill each cell with the piece (instead of a single
-    Unicode character).
+    A helper that draws the board and returns the (prompt_y) row
+    we should write prompts at. 
+    """
+    stdscr.clear()
+    height, width = stdscr.getmaxyx()
+
+    # Validate that the board can fit.
+    required_width = 8 * cell_width + 4
+    required_height = 8 * cell_height + 4
+    if height < required_height or width < required_width:
+        stdscr.addstr(0, 0, "Window too small to draw the chessboard.")
+        stdscr.refresh()
+        return -1
+
+    # Draw squares
+    for row in range(8):
+        for col in range(8):
+            x = col * cell_width + 3  # offset for file labels
+            y = row * cell_height + 1 # offset for rank labels
+            piece = board.piece_at(chess.square(col, 7 - row))
+            # Checkerboard colors
+            if (row + col) % 2 == 0:
+                bg_color = curses.color_pair(2)  # Yellow
+            else:
+                bg_color = curses.color_pair(1)  # Pink
+
+            # Fill entire cell with background color
+            for h_offset in range(cell_height):
+                stdscr.addstr(y + h_offset, x, ' ' * cell_width, bg_color)
+
+            # If there's a piece, draw it
+            if piece:
+                draw_piece_ascii(
+                    stdscr, piece.symbol(),
+                    x, y,
+                    cell_width, cell_height,
+                    bg_color
+                )
+
+    # Draw rank indicators on the left (8..1)
+    for row in range(8):
+        stdscr.addstr(row * cell_height + 1, 1, str(8 - row))
+    # Draw file indicators (A..H) at the bottom
+    for col in range(8):
+        stdscr.addstr(8 * cell_height + 2, col * cell_width + 3, chr(ord('A') + col))
+
+    # Return a row for prompt usage
+    prompt_y = 8 * cell_height + 4
+    return prompt_y
+
+def draw_standard_game(stdscr, board, cell_width=None, cell_height=None):
+    """
+    Original TUI loop for a normal game. 
     """
     init_colors()
-
     while not board.is_game_over():
-        stdscr.clear()
-
-        # Get the available size of the window
+        # Decide cell sizes if None
         height, width = stdscr.getmaxyx()
-
-        # Compute defaults if not provided
         if cell_width is None:
-            # Leave at least 4 columns for rank/file labels
             cell_width = max(3, (width - 4) // 8)
         if cell_height is None:
-            # Leave at least 4 rows for rank/file labels and prompt lines
             cell_height = max(3, (height - 4) // 8)
 
-        # Validate that the board can fit
-        required_width = 8 * cell_width + 4  # 3 for left offset + 1 spare
-        required_height = 8 * cell_height + 4  # 1 for top offset + 1 for bottom labels + 2 spare
-        if height < required_height or width < required_width:
-            stdscr.addstr(0, 0, "Window too small to draw the chessboard.")
-            stdscr.refresh()
-            return
+        prompt_y = draw_board_common(stdscr, board, cell_width, cell_height)
+        if prompt_y < 0:
+            return  # Board didn't fit
 
-        # Draw the board squares and pieces
-        for row in range(8):
-            for col in range(8):
-                # Offsets for drawing each cell
-                x = col * cell_width + 3  # offset for file indicators
-                y = row * cell_height + 1 # offset for rank indicators
-                piece = board.piece_at(chess.square(col, 7 - row))
-
-                # Use pink/yellow backgrounds in a checkerboard pattern
-                if (row + col) % 2 == 0:
-                    bg_color = curses.color_pair(2)  # Yellow square
-                else:
-                    bg_color = curses.color_pair(1)  # Pink square
-
-                # Draw the cell background over all rows of cell_height
-                for h_offset in range(cell_height):
-                    # Fill entire cell row with spaces using the background color
-                    stdscr.addstr(y + h_offset, x, ' ' * cell_width, bg_color)
-
-                # If there's a piece, draw its ASCII art
-                if piece:
-                    draw_piece_ascii(
-                        stdscr, piece.symbol(), 
-                        x, y, 
-                        cell_width, cell_height, 
-                        bg_color
-                    )
-
-        # Draw rank (row) indicators on the left (8..1)
-        for row in range(8):
-            stdscr.addstr(row * cell_height + 1, 1, str(8 - row))
-
-        # Draw file (column) indicators (A..H) at the bottom
-        for col in range(8):
-            stdscr.addstr(8 * cell_height + 2, col * cell_width + 3, chr(ord('A') + col))
-
-        # Refresh to show the board update
-        stdscr.refresh()
-
-        # Prompt for the next move
+        # Prompt user
         color = "White" if board.turn else "Black"
-        prompt_y = 8 * cell_height + 4
         stdscr.addstr(prompt_y, 0, f"Enter {color}'s move (e.g., e4):")
         stdscr.clrtoeol()
         stdscr.refresh()
-
-        # Read user input
+        
+        # Get user move
         stdscr.move(prompt_y + 1, 0)
         stdscr.clrtoeol()
         curses.echo()
         move_str = stdscr.getstr(prompt_y + 1, 0).decode('utf-8')
         curses.noecho()
 
-        # Parse the move
+        # Try parse
         try:
             san_move = board.parse_san(move_str)
             if san_move in board.legal_moves:
                 board.push(san_move)
             else:
-                stdscr.addstr(prompt_y + 2, 0, "Illegal move. Press any key to continue.")
+                stdscr.addstr(prompt_y + 2, 0, "Illegal move. Press any key.")
                 stdscr.refresh()
                 stdscr.getch()
         except ValueError:
@@ -204,36 +195,146 @@ def draw_chessboard(stdscr, board, cell_width=None, cell_height=None):
             stdscr.refresh()
             stdscr.getch()
 
-    # Game is over
+    # Game over
     stdscr.addstr(0, 0, "Game Over. Press any key to exit.")
     stdscr.refresh()
     stdscr.getch()
 
-def main(pgn_file=None, cell_width=None, cell_height=None):
+def draw_puzzle_game(stdscr, board, puzzle_solution, cell_width=None, cell_height=None):
     """
-    Main function which can load a PGN file or start a new game.
-    Allows overriding cell_width and cell_height to control how large
-    the board cells (and the ASCII art pieces) appear in the terminal.
+    A puzzle loop that:
+    - Draws the board
+    - Asks the user to enter the next move in UCI format (e.g. 'd1a4')
+    - Checks if it matches puzzle_solution in sequence
+    - Automatically plays the puzzle's "opponent" move if it's next in puzzle_solution
+    - Ends when puzzle_solution is exhausted or user enters an incorrect move
     """
-    # If a PGN file was provided, load the last position from that game
-    if pgn_file:
-        with open(pgn_file, 'r') as f:
-            game = chess.pgn.read_game(f)
-        board = game.board()
-        for move in game.mainline_moves():
-            board.push(move)
-    else:
-        board = chess.Board()
+    init_colors()
+    # puzzle_solution is a list of moves in UCI format, e.g. ['d1a4','d8d7','a4e4']
+    solution_index = 0
 
-    curses.wrapper(draw_chessboard, board, cell_width, cell_height)
+    # We'll keep going until we run out of solution moves
+    while solution_index < len(puzzle_solution):
+        height, width = stdscr.getmaxyx()
+        if cell_width is None:
+            cell_width = max(3, (width - 4) // 8)
+        if cell_height is None:
+            cell_height = max(3, (height - 4) // 8)
+
+        prompt_y = draw_board_common(stdscr, board, cell_width, cell_height)
+        if prompt_y < 0:
+            return  # Board didn't fit
+
+        # If the side to move matches the side that the next puzzle move belongs to,
+        # we ask the user to input that move.
+        # But we only check the next puzzle move if it is indeed from the color to move.
+        # puzzle_solution is strictly sequential: White's move, Black's move, etc.
+        # If the next puzzle move is for the *other* color, we just auto-play it.
+
+        next_move_uci = puzzle_solution[solution_index]
+        next_move = chess.Move.from_uci(next_move_uci)
+        
+        # If the board's turn matches the next puzzle move's color, we prompt user
+        if board.turn == (board.color_at(next_move.from_square) == chess.WHITE):
+            # Prompt user
+            color_str = "White" if board.turn else "Black"
+            stdscr.addstr(prompt_y, 0, f"Puzzle: Enter {color_str}'s move in UCI (e.g. {next_move_uci}):")
+            stdscr.clrtoeol()
+            stdscr.refresh()
+
+            # Get user input
+            stdscr.move(prompt_y + 1, 0)
+            stdscr.clrtoeol()
+            curses.echo()
+            move_str = stdscr.getstr(prompt_y + 1, 0).decode('utf-8')
+            curses.noecho()
+
+            # Compare to puzzle_solution[solution_index]
+            if move_str.strip().lower() == next_move_uci:
+                # It's correct, so push it on the board
+                board.push(next_move)
+                solution_index += 1
+            else:
+                # Wrong!
+                stdscr.addstr(prompt_y + 2, 0, 
+                    f"Incorrect move. The puzzle solution expects {next_move_uci}. Press any key.")
+                stdscr.refresh()
+                stdscr.getch()
+                return  # You can instead allow retrial or exit puzzle
+        else:
+            # It's not this side's move. So the puzzle solution suggests
+            # that the opposite color should move. We auto-play that move.
+            board.push(next_move)
+            solution_index += 1
+
+    # If we exit the loop, puzzle_solution is done => success
+    draw_board_common(stdscr, board, cell_width, cell_height)
+    stdscr.addstr(0, 0, "Puzzle solved! Press any key to exit.")
+    stdscr.refresh()
+    stdscr.getch()
+
+
+def load_random_puzzle():
+    """
+    Fetch a random puzzle from lichess.org/api/puzzle/next,
+    parse its PGN, and return the board set to puzzle's initial position
+    plus the puzzle's solution in UCI list form.
+    """
+    url = "https://lichess.org/api/puzzle/next"
+    response = requests.get(url, timeout=10)
+    data = response.json()
+
+    puzzle_data = data["puzzle"]
+    game_data = data["game"]
+
+    puzzle_solution = puzzle_data["solution"]  # e.g. ["d1a4","d8d7","a4e4"]
+    pgn = game_data["pgn"]                    # the PGN that leads up to puzzle
+    initial_ply = puzzle_data["initialPly"]   # half-move index
+
+    # Parse the PGN with python-chess
+    pgn_io = StringIO(pgn)
+    game = chess.pgn.read_game(pgn_io)
+    board = game.board()
+
+    # The game.mainline_moves() is a generator of all moves.
+    moves = list(game.mainline_moves())
+    # Push moves up to initialPly
+    for i in range(initial_ply):
+        board.push(moves[i])
+
+    return board, puzzle_solution
+
+def main(pgn_file=None, puzzle_mode=False, cell_width=None, cell_height=None):
+    """
+    Main entry point. 
+    - If puzzle_mode is True, fetch a puzzle, load it, and run puzzle UI.
+    - Else if a pgn_file is provided, load the last position from that PGN.
+    - Otherwise, start a fresh standard game.
+    """
+    if puzzle_mode:
+        board, puzzle_solution = load_random_puzzle()
+        curses.wrapper(draw_puzzle_game, board, puzzle_solution, cell_width, cell_height)
+    else:
+        if pgn_file:
+            with open(pgn_file, 'r') as f:
+                game = chess.pgn.read_game(f)
+            board = game.board()
+            for move in game.mainline_moves():
+                board.push(move)
+        else:
+            board = chess.Board()
+        curses.wrapper(draw_standard_game, board, cell_width, cell_height)
+
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) > 2:
-        print("Usage: python tess.py [pgn_file]")
-        sys.exit(1)
+
+    # Very simplistic command-line handling
+    # e.g. "python puzzle_tui.py puzzle" to run puzzle mode
+    # e.g. "python puzzle_tui.py mygame.pgn" to load a PGN
+    if len(sys.argv) == 2 and sys.argv[1].lower() == "puzzle":
+        main(puzzle_mode=True)
     elif len(sys.argv) == 2:
-        main(sys.argv[1])
+        main(pgn_file=sys.argv[1])
     else:
         main()
-
