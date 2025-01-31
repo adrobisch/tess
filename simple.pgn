@@ -1,0 +1,10 @@
+[Event "Example Game"]
+[Site "Example Site"]
+[Date "2023.10.01"]
+[Round "1"]
+[White "Player A"]
+[Black "Player B"]
+[Result "1-0"]
+
+1. e4 e5
+
