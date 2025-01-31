@@ -32,11 +32,12 @@ def draw_chessboard(stdscr, board):
                 y = row * cell_height + 1  # Add offset for rank indicators on the top
                 piece = board.piece_at(chess.square(col, 7 - row))
                 if (row + col) % 2 == 0:
-                    stdscr.addstr(y, x, '  ', curses.A_REVERSE)
+                    bg_color = curses.A_REVERSE
                 else:
-                    stdscr.addstr(y, x, '  ')
+                    bg_color = curses.A_NORMAL
+                stdscr.addstr(y, x, '  ', bg_color)
                 if piece:
-                    stdscr.addstr(y, x, PIECE_UNICODE[piece.symbol()])
+                    stdscr.addstr(y, x, PIECE_UNICODE[piece.symbol()], bg_color)
 
         # Draw rank indicators on the top
         for row in range(8):
