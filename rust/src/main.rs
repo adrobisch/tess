@@ -19,7 +19,7 @@ use shakmaty::{san, CastlingMode, Chess, Color as ChessColor, File, Move, Positi
 use std::{collections::HashMap, io, time::Duration, time::Instant};
 
 // ----------------------------------------------
-// Piece ASCII definitions, similar to Python version
+// Piece ASCII definitions
 // ----------------------------------------------
 static ASCII_PIECES: &[(&str, &[&str])] = &[
     ("P", &[" ^ ", "(P)", "/_\\"]),
@@ -86,6 +86,15 @@ enum DisplayMode {
     Simple,
 }
 
+impl DisplayMode {
+    fn default_cell_dimensions(&self) -> (usize, usize) {
+        match self {
+            DisplayMode::Big => (5, 3),
+            DisplayMode::Simple => (2, 1),
+        }
+    }
+}
+
 // ----------------------------------------------
 // Application state
 // ----------------------------------------------
@@ -102,18 +111,20 @@ struct App {
 
 impl App {
     fn new_standard(board: Chess, display: DisplayMode) -> Self {
+        let (width, height) = display.default_cell_dimensions();
         Self {
             board,
             mode: AppMode::StandardGame,
             display,
             input_buffer: String::new(),
             message: String::new(),
-            cell_width: 5,
-            cell_height: 3,
+            cell_width: width,
+            cell_height: height,
         }
     }
 
     fn new_puzzle(board: Chess, solution: Vec<Move>, display: DisplayMode) -> Self {
+        let (width, height) = display.default_cell_dimensions();
         Self {
             board,
             mode: AppMode::Puzzle {
@@ -123,8 +134,8 @@ impl App {
             display,
             input_buffer: String::new(),
             message: String::from("Puzzle mode: please enter moves in UCI (e.g. e2e4)."),
-            cell_width: 5,
-            cell_height: 3,
+            cell_width: width,
+            cell_height: height,
         }
     }
 }
@@ -330,7 +341,7 @@ fn make_board_text(app: &App) -> Vec<Line> {
         }
     }
 
-    // Now we also want rank and file indicators (like Python code).
+    // Now we also want rank and file indicators.
     // For simplicity, let's place them left of each rank, and below each file.
 
     // Ranks on left: row => (8-row)
