@@ -1,3 +1,4 @@
+use clap::{Parser, Subcommand};
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -7,16 +8,14 @@ use ratatui::text::Line;
 use ratatui::{
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
+    style::{Color, Style},
     text::Span,
     widgets::{Block, Paragraph},
     Terminal,
 };
 use serde::Deserialize;
 use shakmaty::fen::Fen;
-use shakmaty::{
-    san, CastlingMode, Chess, Color as ChessColor, File, Move, Position, Rank, Role, Square,
-};
+use shakmaty::{san, CastlingMode, Chess, Color as ChessColor, File, Move, Position, Rank, Role};
 use std::{collections::HashMap, io, time::Duration, time::Instant};
 
 // ----------------------------------------------
@@ -58,9 +57,10 @@ struct LichessNextPuzzle {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Puzzle {
     solution: Vec<String>,
-    initialPly: u16,
+    initial_ply: u16,
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,24 +121,45 @@ impl App {
 }
 
 // ----------------------------------------------
+// Command-line argument parsing with clap
+// ----------------------------------------------
+#[derive(Parser)]
+#[command(name = "Chess App")]
+#[command(about = "A chess application", long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    #[command(about = "Start a puzzle game")]
+    Puzzle,
+    #[command(about = "Load a PGN file")]
+    Load {
+        #[arg(required = true)]
+        filename: String,
+    },
+    #[command(about = "Start a new standard game")]
+    Standard,
+}
+
+// ----------------------------------------------
 // Main entry
 // ----------------------------------------------
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().collect();
+    let cli = Cli::parse();
 
-    // Basic command handling
-    let mut app = if args.len() == 2 && args[1].to_lowercase() == "puzzle" {
-        // puzzle mode
-        let (board, solution) = load_random_puzzle()?;
-        App::new_puzzle(board, solution)
-    } else if args.len() == 2 {
-        // load PGN file
-        let filename = &args[1];
-        let board = load_pgn_position(filename)?;
-        App::new_standard(board)
-    } else {
-        // fresh standard game
-        App::new_standard(Chess::default())
+    let mut app = match cli.command {
+        Commands::Puzzle => {
+            let (board, solution) = load_random_puzzle()?;
+            App::new_puzzle(board, solution)
+        }
+        Commands::Load { filename } => {
+            let board = load_pgn_position(&filename)?;
+            App::new_standard(board)
+        }
+        Commands::Standard => App::new_standard(Chess::default()),
     };
 
     // Setup terminal
@@ -571,7 +592,7 @@ fn load_random_puzzle() -> anyhow::Result<(Chess, Vec<Move>)> {
     let puzzle_solution_uci = resp.puzzle.solution;
     // Parse the PGN
     let pgn = resp.game.pgn;
-    let initial_ply = resp.puzzle.initialPly as usize;
+    let initial_ply = resp.puzzle.initial_ply as usize;
     let puzzle_game = parse_game(&pgn, Some(initial_ply))?;
 
     // Now parse puzzle_solution_uci
