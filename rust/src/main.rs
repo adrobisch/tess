@@ -50,21 +50,24 @@ fn piece_ascii_map() -> HashMap<char, Vec<String>> {
 // ----------------------------------------------
 // Lichess puzzle JSON structure for `lichess.org/api/puzzle/next`
 // ----------------------------------------------
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct LichessNextPuzzle {
     puzzle: Puzzle,
     game: Game,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Puzzle {
+    id: String,
+    rating: u16,
     solution: Vec<String>,
     initial_ply: u16,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct Game {
+    id: String,
     pgn: String,
 }
 
@@ -123,7 +126,12 @@ impl App {
         }
     }
 
-    fn new_puzzle(board: Chess, solution: Vec<Move>, display: DisplayMode) -> Self {
+    fn new_puzzle(
+        board: Chess,
+        solution: Vec<Move>,
+        display: DisplayMode,
+        puzzle: LichessNextPuzzle,
+    ) -> Self {
         let (width, height) = display.default_cell_dimensions();
         Self {
             board,
@@ -133,7 +141,10 @@ impl App {
             },
             display,
             input_buffer: String::new(),
-            message: String::from("Puzzle mode: please enter moves in UCI (e.g. e2e4)."),
+            message: format!(
+                "Puzzle ({}): please enter moves in simplified UCI (e.g. e2e4).",
+                puzzle.puzzle.id
+            ),
             cell_width: width,
             cell_height: height,
         }
@@ -175,8 +186,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut app = match cli.command {
         Commands::Puzzle => {
-            let (board, solution) = load_random_puzzle()?;
-            App::new_puzzle(board, solution, cli.display)
+            let (board, solution, puzzle) = load_random_puzzle()?;
+            App::new_puzzle(board, solution, cli.display, puzzle)
         }
         Commands::Load { filename } => {
             let board = load_pgn_position(&filename)?;
@@ -597,7 +608,12 @@ fn parse_uci_move(board: &Chess, input: &str) -> Option<Move> {
 
 // Convert Move to "e2e4" style string
 fn move_to_uci(mv: &Move) -> String {
-    mv.to_string() // shakmaty uses UCI by default
+    //mv.to_string() // shakmaty uses UCI by default
+    format!(
+        "{}{}",
+        mv.from().map(|f| f.to_string()).unwrap_or("".to_string()),
+        mv.to().to_string()
+    )
 }
 
 struct LastPosition {
@@ -638,8 +654,9 @@ impl Visitor for LastPosition {
 
     fn san(&mut self, san_plus: SanPlus) {
         match self.max_ply {
-            Some(max) if self.moves < max => {
+            Some(max) if self.moves < max + 1 => {
                 if let Ok(m) = san_plus.san.to_move(&self.pos) {
+                    println!("playing {}", move_to_uci(&m));
                     self.pos.play_unchecked(&m);
                     self.moves += 1
                 }
@@ -656,15 +673,17 @@ impl Visitor for LastPosition {
 // ----------------------------------------------
 // Load random puzzle from lichess
 // ----------------------------------------------
-fn load_random_puzzle() -> anyhow::Result<(Chess, Vec<Move>)> {
+fn load_random_puzzle() -> anyhow::Result<(Chess, Vec<Move>, LichessNextPuzzle)> {
     let url = "https://lichess.org/api/puzzle/next";
-    let resp: LichessNextPuzzle = reqwest::blocking::get(url)?.json()?;
+    let lichess_puzzle: LichessNextPuzzle = reqwest::blocking::get(url)?.json()?;
+
+    println!("{:?}", lichess_puzzle);
 
     // Parse puzzle solution as UCI moves
-    let puzzle_solution_uci = resp.puzzle.solution;
+    let puzzle_solution_uci = lichess_puzzle.puzzle.solution.clone();
     // Parse the PGN
-    let pgn = resp.game.pgn;
-    let initial_ply = resp.puzzle.initial_ply as usize;
+    let pgn = lichess_puzzle.game.pgn.to_string();
+    let initial_ply = lichess_puzzle.puzzle.initial_ply as usize;
     let puzzle_game = parse_game(&pgn, Some(initial_ply))?;
 
     // Now parse puzzle_solution_uci
@@ -672,6 +691,10 @@ fn load_random_puzzle() -> anyhow::Result<(Chess, Vec<Move>)> {
     for uci_str in puzzle_solution_uci {
         // Attempt to find a matching legal move
         let all_legals = puzzle_game.legal_moves();
+        println!("solution move: {uci_str}, game: {:?}", puzzle_game);
+        for legal in all_legals.iter() {
+            println!("legal: {}", move_to_uci(legal));
+        }
         let found = all_legals.into_iter().find(|m| move_to_uci(&m) == uci_str);
         if let Some(mv) = found {
             solution_moves.push(mv);
@@ -681,7 +704,11 @@ fn load_random_puzzle() -> anyhow::Result<(Chess, Vec<Move>)> {
         }
     }
 
-    Ok((puzzle_game, solution_moves))
+    if solution_moves.is_empty() {
+        return Err(anyhow::anyhow!("invalid solution!"));
+    }
+
+    Ok((puzzle_game, solution_moves, lichess_puzzle))
 }
 
 // ----------------------------------------------
