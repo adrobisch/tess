@@ -71,13 +71,19 @@ struct Game {
 // ----------------------------------------------
 // Application modes
 // ----------------------------------------------
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 enum AppMode {
     StandardGame,
     Puzzle {
         solution: Vec<Move>,
         solution_index: usize,
     },
+}
+
+#[derive(Debug, clap::ValueEnum, Clone, PartialEq)]
+enum DisplayMode {
+    Big,
+    Simple,
 }
 
 // ----------------------------------------------
@@ -87,6 +93,7 @@ enum AppMode {
 struct App {
     board: Chess,
     mode: AppMode,
+    display: DisplayMode,
     input_buffer: String,
     message: String,
     cell_width: usize,
@@ -94,10 +101,11 @@ struct App {
 }
 
 impl App {
-    fn new_standard(board: Chess) -> Self {
+    fn new_standard(board: Chess, display: DisplayMode) -> Self {
         Self {
             board,
             mode: AppMode::StandardGame,
+            display,
             input_buffer: String::new(),
             message: String::new(),
             cell_width: 5,
@@ -105,13 +113,14 @@ impl App {
         }
     }
 
-    fn new_puzzle(board: Chess, solution: Vec<Move>) -> Self {
+    fn new_puzzle(board: Chess, solution: Vec<Move>, display: DisplayMode) -> Self {
         Self {
             board,
             mode: AppMode::Puzzle {
                 solution,
                 solution_index: 0,
             },
+            display,
             input_buffer: String::new(),
             message: String::from("Puzzle mode: please enter moves in UCI (e.g. e2e4)."),
             cell_width: 5,
@@ -129,6 +138,9 @@ impl App {
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+
+    #[arg(long, short)]
+    display: DisplayMode,
 }
 
 #[derive(Subcommand)]
@@ -153,13 +165,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = match cli.command {
         Commands::Puzzle => {
             let (board, solution) = load_random_puzzle()?;
-            App::new_puzzle(board, solution)
+            App::new_puzzle(board, solution, cli.display)
         }
         Commands::Load { filename } => {
             let board = load_pgn_position(&filename)?;
-            App::new_standard(board)
+            App::new_standard(board, cli.display)
         }
-        Commands::Standard => App::new_standard(Chess::default()),
+        Commands::Standard => App::new_standard(Chess::default(), cli.display),
     };
 
     // Setup terminal
@@ -286,26 +298,31 @@ fn make_board_text(app: &App) -> Vec<Line> {
                 shakmaty::Square::from_coords(File::new(col as u32), Rank::new((7 - row) as u32));
 
             if let Some(piece) = app.board.board().piece_at(sq) {
-                let symbol_char = piece_char(piece);
-                if let Some(shape_lines) = ascii_map.get(&symbol_char) {
-                    let shape_height = shape_lines.len();
-                    let shape_width = shape_lines.iter().map(|l| l.len()).max().unwrap_or(0);
+                if app.display == DisplayMode::Simple {
+                    let symbol_char = piece_unicode(piece);
+                    buffer[cell_y][cell_x] = (symbol_char, style);
+                } else {
+                    let symbol_char = piece_char(piece);
+                    if let Some(shape_lines) = ascii_map.get(&symbol_char) {
+                        let shape_height = shape_lines.len();
+                        let shape_width = shape_lines.iter().map(|l| l.len()).max().unwrap_or(0);
 
-                    let offset_y = (app.cell_height.saturating_sub(shape_height)) / 2;
-                    let offset_x = (app.cell_width.saturating_sub(shape_width)) / 2;
+                        let offset_y = (app.cell_height.saturating_sub(shape_height)) / 2;
+                        let offset_x = (app.cell_width.saturating_sub(shape_width)) / 2;
 
-                    for (sy, line) in shape_lines.iter().enumerate() {
-                        let ty = cell_y + offset_y + sy;
-                        if ty >= board_height {
-                            break;
-                        }
-                        let mut tx = cell_x + offset_x;
-                        for ch in line.chars() {
-                            if tx >= board_width {
+                        for (sy, line) in shape_lines.iter().enumerate() {
+                            let ty = cell_y + offset_y + sy;
+                            if ty >= board_height {
                                 break;
                             }
-                            buffer[ty][tx] = (ch, style);
-                            tx += 1;
+                            let mut tx = cell_x + offset_x;
+                            for ch in line.chars() {
+                                if tx >= board_width {
+                                    break;
+                                }
+                                buffer[ty][tx] = (ch, style);
+                                tx += 1;
+                            }
                         }
                     }
                 }
@@ -383,6 +400,54 @@ fn piece_char(piece: shakmaty::Piece) -> char {
         ch.to_ascii_lowercase()
     } else {
         ch
+    }
+}
+
+// Convert a shakmaty piece into a Unicode character
+fn piece_unicode(piece: shakmaty::Piece) -> char {
+    match piece.role {
+        Role::Pawn => {
+            if piece.color == ChessColor::Black {
+                '♟'
+            } else {
+                '♙'
+            }
+        }
+        Role::Knight => {
+            if piece.color == ChessColor::Black {
+                '♞'
+            } else {
+                '♘'
+            }
+        }
+        Role::Bishop => {
+            if piece.color == ChessColor::Black {
+                '♝'
+            } else {
+                '♗'
+            }
+        }
+        Role::Rook => {
+            if piece.color == ChessColor::Black {
+                '♜'
+            } else {
+                '♖'
+            }
+        }
+        Role::Queen => {
+            if piece.color == ChessColor::Black {
+                '♛'
+            } else {
+                '♕'
+            }
+        }
+        Role::King => {
+            if piece.color == ChessColor::Black {
+                '♚'
+            } else {
+                '♔'
+            }
+        }
     }
 }
 
