@@ -247,7 +247,7 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length((8 * app.cell_height + 2) as u16), // board area
+            Constraint::Length((8 * app.cell_height + 4) as u16), // board area + labels
             Constraint::Min(3),                                   // input area
         ])
         .split(f.area());
@@ -261,7 +261,6 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         Paragraph::new(format!("{}\nMove input: {}", app.message, app.input_buffer));
     f.render_widget(input_paragraph, chunks[1]);
 }
-
 // ----------------------------------------------
 // Build the board ASCII with styling
 // ----------------------------------------------
@@ -272,20 +271,21 @@ fn make_board_text(app: &App) -> Vec<Line> {
 
     let pink_style = Style::default().fg(Color::White).bg(Color::Magenta);
     let yellow_style = Style::default().fg(Color::Black).bg(Color::Yellow);
+    let label_style = Style::default().fg(Color::White).bg(Color::Reset);
 
     // Prepare piece ASCII map
     let ascii_map = piece_ascii_map();
 
     // We'll create a 2D array of (char, Style).
     let mut buffer: Vec<Vec<(char, Style)>> =
-        vec![vec![(' ', Style::default()); board_width]; board_height];
+        vec![vec![(' ', Style::default()); board_width + 2]; board_height + 2];
 
     // Fill squares
     for row in 0..8 {
         for col in 0..8 {
             // top-left corner of this cell in the buffer
-            let cell_x = col * app.cell_width;
-            let cell_y = row * app.cell_height;
+            let cell_x = col * app.cell_width + 1;
+            let cell_y = row * app.cell_height + 1;
 
             // color
             let style = if (row + col) % 2 == 0 {
@@ -298,9 +298,7 @@ fn make_board_text(app: &App) -> Vec<Line> {
             // fill with spaces
             for dy in 0..app.cell_height {
                 for dx in 0..app.cell_width {
-                    if cell_y + dy < board_height && cell_x + dx < board_width {
-                        buffer[cell_y + dy][cell_x + dx] = (' ', style);
-                    }
+                    buffer[cell_y + dy][cell_x + dx] = (' ', style);
                 }
             }
 
@@ -323,12 +321,12 @@ fn make_board_text(app: &App) -> Vec<Line> {
 
                         for (sy, line) in shape_lines.iter().enumerate() {
                             let ty = cell_y + offset_y + sy;
-                            if ty >= board_height {
+                            if ty >= board_height + 2 {
                                 break;
                             }
                             let mut tx = cell_x + offset_x;
                             for ch in line.chars() {
-                                if tx >= board_width {
+                                if tx >= board_width + 2 {
                                     break;
                                 }
                                 buffer[ty][tx] = (ch, style);
@@ -342,31 +340,29 @@ fn make_board_text(app: &App) -> Vec<Line> {
     }
 
     // Now we also want rank and file indicators.
-    // For simplicity, let's place them left of each rank, and below each file.
-
     // Ranks on left: row => (8-row)
     for row in 0..8 {
         let label = format!("{}", 8 - row);
-        // place at x=0, y = row*cell_height
+        // place at x=0, y = (row+1)*cell_height
         // we only place it if there's space
-        let py = row * app.cell_height;
+        let py = (row + 1) * app.cell_height;
         for (i, ch) in label.chars().enumerate() {
-            if i < board_width {
+            if i < board_height + 2 {
                 buffer[py][i].0 = ch;
-                buffer[py][i].1 = Style::default().fg(Color::White).bg(Color::Reset);
+                buffer[py][i].1 = label_style;
             }
         }
     }
 
     // Files on bottom: col => A..H
     let file_labels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
-    let bottom_y = board_height.saturating_sub(1);
+    let bottom_y = board_height + 1;
     for col in 0..8 {
         let ch = file_labels[col];
-        let px = col * app.cell_width;
-        if px < board_width {
+        let px = (col + 1) * app.cell_width;
+        if px < board_width + 2 {
             buffer[bottom_y][px].0 = ch;
-            buffer[bottom_y][px].1 = Style::default().fg(Color::White).bg(Color::Reset);
+            buffer[bottom_y][px].1 = label_style;
         }
     }
 
@@ -419,7 +415,7 @@ fn piece_unicode(piece: shakmaty::Piece) -> char {
     match piece.role {
         Role::Pawn => {
             if piece.color == ChessColor::Black {
-                '♟'
+                'p'
             } else {
                 '♙'
             }
