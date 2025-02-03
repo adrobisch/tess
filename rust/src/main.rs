@@ -50,13 +50,13 @@ fn piece_ascii_map() -> HashMap<char, Vec<String>> {
 // ----------------------------------------------
 // Lichess puzzle JSON structure for `lichess.org/api/puzzle/next`
 // ----------------------------------------------
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 struct LichessNextPuzzle {
     puzzle: Puzzle,
     game: Game,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct Puzzle {
     id: String,
@@ -65,9 +65,8 @@ struct Puzzle {
     initial_ply: u16,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 struct Game {
-    id: String,
     pgn: String,
 }
 
@@ -80,6 +79,8 @@ enum AppMode {
     Puzzle {
         solution: Vec<Move>,
         solution_index: usize,
+        completed: bool,
+        lichess: LichessNextPuzzle,
     },
 }
 
@@ -133,22 +134,34 @@ impl App {
         puzzle: LichessNextPuzzle,
     ) -> Self {
         let (width, height) = display.default_cell_dimensions();
-        let turn = board.turn().to_string();
-        let rating = puzzle.puzzle.rating.to_string();
         Self {
             board,
             mode: AppMode::Puzzle {
                 solution,
                 solution_index: 0,
+                completed: false,
+                lichess: puzzle,
             },
             display,
             input_buffer: String::new(),
-            message: format!(
-                "Puzzle {}, rating: {rating}, please enter moves in simplified UCI (e.g. e2e4). {turn} to move.",
-                puzzle.puzzle.id
-            ),
+            message: "".to_string(),
             cell_width: width,
             cell_height: height,
+        }
+    }
+
+    fn start_message(&self) -> String {
+        let turn = self.board.turn().to_string();
+        match &self.mode {
+            AppMode::StandardGame => "New Game, {turn} to move.".to_string(),
+            AppMode::Puzzle { lichess, .. } => {
+                let rating = lichess.puzzle.rating.to_string();
+
+                format!(
+                "Puzzle {}, rating: {rating}, please enter moves in simplified UCI (e.g. e2e4). {turn} to move.",
+                lichess.puzzle.id
+            )
+            }
         }
     }
 }
@@ -170,7 +183,10 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     #[command(about = "Start a puzzle game")]
-    Puzzle,
+    Puzzle {
+        /// load this puzzle id, if not specified, load random
+        id: Option<String>,
+    },
     #[command(about = "Load a PGN file")]
     Load {
         #[arg(required = true)]
@@ -187,8 +203,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     let mut app = match cli.command {
-        Commands::Puzzle => {
-            let (board, solution, puzzle) = load_random_puzzle()?;
+        Commands::Puzzle { id } => {
+            let (board, solution, puzzle) = load_puzzle(id)?;
             App::new_puzzle(board, solution, cli.display, puzzle)
         }
         Commands::Load { filename } => {
@@ -223,7 +239,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 // ----------------------------------------------
 // The core event loop
 // ----------------------------------------------
-fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<()> {
+fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> anyhow::Result<()> {
     let mut last_tick = Instant::now();
     let tick_rate = Duration::from_millis(250);
 
@@ -238,7 +254,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
 
         if crossterm::event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
-                if !handle_key_event(app, key) {
+                if !handle_key_event(app, key)? {
                     // false => exit signal
                     return Ok(());
                 }
@@ -475,23 +491,47 @@ fn piece_unicode(piece: shakmaty::Piece) -> char {
 // Handle keyboard events (for move input, etc.)
 // Return false if we should quit
 // ----------------------------------------------
-fn handle_key_event(app: &mut App, key: KeyEvent) -> bool {
+fn handle_key_event(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
     match key.code {
-        KeyCode::Char('q') => {
+        KeyCode::Char('n') => match app.mode.clone() {
+            AppMode::StandardGame => app.board = Chess::default(),
+            AppMode::Puzzle { .. } => {
+                let (board, solution, puzzle) = load_puzzle(None)?;
+                app.board = board;
+                app.mode = AppMode::Puzzle {
+                    solution,
+                    solution_index: 0,
+                    completed: false,
+                    lichess: puzzle,
+                };
+                app.message = app.start_message()
+            }
+        },
+        KeyCode::Esc | KeyCode::Char('q') => {
             // Quit on 'q'
-            return false;
+            return Ok(false);
         }
         KeyCode::Enter => {
             // User pressed Enter => parse the input as a move
             let input = app.input_buffer.clone();
             if !input.is_empty() {
                 match app.mode.clone() {
-                    AppMode::StandardGame => handle_standard_move(app, input.trim()),
+                    AppMode::StandardGame => handle_standard_move(app, input.trim())?,
                     AppMode::Puzzle {
                         solution,
                         solution_index,
+                        lichess,
+                        ..
                     } => {
-                        handle_puzzle_move(app, input.trim(), &solution, &solution_index);
+                        let (new_index, completed) =
+                            handle_puzzle_move(app, input.trim(), &solution, &solution_index)?;
+                        app.mode = AppMode::Puzzle {
+                            solution,
+                            solution_index: new_index,
+                            completed,
+                            lichess,
+                        };
+                        ()
                     }
                 }
             }
@@ -506,27 +546,27 @@ fn handle_key_event(app: &mut App, key: KeyEvent) -> bool {
         _ => {}
     }
 
-    true
+    Ok(true)
 }
 
 // Handle moves for standard game mode
-fn handle_standard_move(app: &mut App, input: &str) {
+fn handle_standard_move(app: &mut App, input: &str) -> anyhow::Result<()> {
     // Try parse as SAN first
     let parse_result = san::San::from_ascii(input.as_bytes());
     if let Ok(san_move) = parse_result {
         if let Ok(mv) = san_move.to_move(&app.board) {
             // Check if legal
             if app.board.is_legal(&mv) {
-                app.board = app.board.clone().play(&mv).unwrap();
+                app.board = app.board.clone().play(&mv)?;
                 app.message = format!("Move {} played", input);
                 if app.board.is_game_over() {
                     app.message = format!("Game over. {:?}", app.board.outcome());
                 }
-                return;
             }
         }
     }
     app.message = format!("Illegal or unrecognized move: {}", input);
+    Ok(())
 }
 
 // Handle puzzle logic
@@ -535,63 +575,43 @@ fn handle_puzzle_move(
     input: &str,
     solution: &Vec<Move>,
     solution_index: &usize,
-) -> usize {
-    let mut new_index = solution_index.clone();
-    // If puzzle is solved, do nothing
-    if new_index >= solution.len() {
-        app.message = "Puzzle already solved.".to_string();
-        return new_index;
-    }
-    let expected_move = &solution[new_index];
+) -> anyhow::Result<(usize, bool)> {
+    let expected_move = &solution[*solution_index];
+    let mut new_index = *solution_index;
 
     // Try parse the user input as a UCI move
     let maybe_move = parse_uci_move(&app.board, input);
     match maybe_move {
         Some(user_move) if user_move.eq(expected_move) => {
             // correct
-            app.board = app.board.clone().play(&user_move).unwrap();
+            app.board = app.board.clone().play(&user_move)?;
             new_index += 1;
-            app.message = format!("Correct! Move {} was played.", input);
-
-            // If there's an immediate next move from puzzle that belongs to "opponent", auto-play it
-            while new_index < solution.len() {
-                let next: &Move = &solution[new_index];
-                let color_of_next =
-                    if let Some(pc) = app.board.board().piece_at(next.from().unwrap()) {
-                        pc.color
-                    } else {
-                        // If we can't deduce piece color, break
-                        break;
-                    };
-                // If it's the same side as currently on move, break
-                // Otherwise, auto-play
-                let side_to_move = app.board.turn();
-                if side_to_move == color_of_next {
-                    // The puzzle expects a user move next
-                    break;
-                } else {
-                    // It's the "opponent" move, so auto-play
-                    app.board = app.board.clone().play(&next).unwrap();
-                    new_index += 1;
-                }
-            }
 
             // Check if puzzle finished
             if new_index >= solution.len() {
-                app.message = "Puzzle solved! Congratulations.".to_string();
+                app.message =
+                    "Puzzle solved! Congratulations. Press 'n' for a new puzzle.".to_string();
+                return Ok((new_index, true));
             }
+
+            // next move from the puzzle belongs to the "opponent", auto-play it
+            let next: &Move = &solution[new_index];
+            app.board = app.board.clone().play(&next)?;
+            new_index += 1;
+            app.message = format!(
+                "Move {} was correct! Opponent played: {}",
+                input,
+                move_to_uci(next)
+            );
         }
         _ => {
             app.message = format!(
-                "Incorrect move. Expected UCI: {}. Puzzle failed.",
+                "Incorrect move. Expected UCI: {}. Puzzle failed. Press 'n' for a new puzzle.",
                 move_to_uci(expected_move)
             );
-            // You might choose to end puzzle mode or just keep going
-            // We'll just end it by bumping index
-            new_index = solution.len();
         }
     }
-    new_index
+    Ok((new_index, false))
 }
 
 // ----------------------------------------------
@@ -674,8 +694,12 @@ impl Visitor for LastPosition {
 // ----------------------------------------------
 // Load random puzzle from lichess
 // ----------------------------------------------
-fn load_random_puzzle() -> anyhow::Result<(Chess, Vec<Move>, LichessNextPuzzle)> {
-    let url = "https://lichess.org/api/puzzle/next";
+fn load_puzzle(id: Option<String>) -> anyhow::Result<(Chess, Vec<Move>, LichessNextPuzzle)> {
+    let url = format!(
+        "https://lichess.org/api/puzzle/{}",
+        id.unwrap_or("next".to_string())
+    );
+
     let lichess_puzzle: LichessNextPuzzle = reqwest::blocking::get(url)?.json()?;
 
     // Parse puzzle solution as UCI moves
@@ -688,8 +712,6 @@ fn load_random_puzzle() -> anyhow::Result<(Chess, Vec<Move>, LichessNextPuzzle)>
 
     // Now parse puzzle_solution_uci
     let mut solution_moves = Vec::new();
-    // flag to ignore the next (engine)  move
-    let mut ignore_next = false;
 
     for uci_str in puzzle_solution_uci.clone().into_iter() {
         let all_legals = solution_game.clone().legal_moves();
@@ -697,12 +719,7 @@ fn load_random_puzzle() -> anyhow::Result<(Chess, Vec<Move>, LichessNextPuzzle)>
             .into_iter()
             .find(|m| move_to_uci(&m) == uci_str.to_string());
         if let Some(mv) = found {
-            if ignore_next {
-                ignore_next = false
-            } else {
-                solution_moves.push(mv.to_owned());
-                ignore_next = true
-            }
+            solution_moves.push(mv.to_owned());
             solution_game = solution_game.clone().play(&mv)?;
         } else {
             return Err(anyhow::anyhow!(
