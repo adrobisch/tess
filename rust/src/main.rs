@@ -153,7 +153,7 @@ impl App {
     fn start_message(&self) -> String {
         let turn = self.board.turn().to_string();
         match &self.mode {
-            AppMode::StandardGame => "New Game, {turn} to move.".to_string(),
+            AppMode::StandardGame => format!("New Game, {turn} to move."),
             AppMode::Puzzle { lichess, .. } => {
                 let rating = lichess.puzzle.rating.to_string();
 
@@ -533,14 +533,16 @@ fn handle_standard_move(app: &mut App, input: &str) -> anyhow::Result<()> {
             // Check if legal
             if app.board.is_legal(&mv) {
                 app.board = app.board.clone().play(&mv)?;
-                app.message = format!("Move {} played", input);
+                let turn = app.board.turn();
+                app.message = format!("Move {} played. {turn} to move.", input);
                 if app.board.is_game_over() {
                     app.message = format!("Game over. {:?}", app.board.outcome());
                 }
             }
         }
+    } else {
+        app.message = format!("Illegal or unrecognized move: {}", input);
     }
-    app.message = format!("Illegal or unrecognized move: {}", input);
     Ok(())
 }
 
