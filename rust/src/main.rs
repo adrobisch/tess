@@ -144,7 +144,7 @@ impl App {
             },
             display,
             input_buffer: String::new(),
-            message: "".to_string(),
+            message: String::new(),
             cell_width: width,
             cell_height: height,
         }
@@ -160,7 +160,7 @@ impl App {
                 format!(
                 "Puzzle {}, rating: {rating}, please enter moves in simplified UCI (e.g. e2e4). {turn} to move.",
                 lichess.puzzle.id
-            )
+                )
             }
         }
     }
@@ -213,6 +213,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Standard => App::new_standard(Chess::default(), cli.display),
     };
+
+    app.message = app.start_message();
 
     // Setup terminal
     enable_raw_mode()?;
@@ -299,8 +301,10 @@ fn make_board_text(app: &App) -> Vec<Line> {
     let board_height = 8 * app.cell_height;
 
     let pink_style = Style::default().fg(Color::White).bg(Color::Magenta);
-    let yellow_style = Style::default().fg(Color::Black).bg(Color::Yellow);
+    let yellow_style = Style::default().fg(Color::White).bg(Color::Yellow);
     let label_style = Style::default().fg(Color::White).bg(Color::Reset);
+    let white_piece_style = Style::default().fg(Color::White);
+    let black_piece_style = Style::default().fg(Color::Black);
 
     // Prepare piece ASCII map
     let ascii_map = piece_ascii_map();
@@ -336,9 +340,16 @@ fn make_board_text(app: &App) -> Vec<Line> {
                 shakmaty::Square::from_coords(File::new(col as u32), Rank::new((7 - row) as u32));
 
             if let Some(piece) = app.board.board().piece_at(sq) {
+                let piece_style = if piece.color == ChessColor::White {
+                    white_piece_style
+                } else {
+                    black_piece_style
+                }
+                .bg(style.bg.unwrap_or(Color::Reset)); // Use the same background color as the square
+
                 if app.display == DisplayMode::Simple {
                     let symbol_char = piece_unicode(piece);
-                    buffer[cell_y][cell_x] = (symbol_char, style);
+                    buffer[cell_y][cell_x] = (symbol_char, piece_style);
                 } else {
                     let symbol_char = piece_char(piece);
                     if let Some(shape_lines) = ascii_map.get(&symbol_char) {
@@ -358,7 +369,7 @@ fn make_board_text(app: &App) -> Vec<Line> {
                                 if tx >= board_width + 2 {
                                     break;
                                 }
-                                buffer[ty][tx] = (ch, style);
+                                buffer[ty][tx] = (ch, piece_style);
                                 tx += 1;
                             }
                         }
@@ -442,48 +453,12 @@ fn piece_char(piece: shakmaty::Piece) -> char {
 // Convert a shakmaty piece into a Unicode character
 fn piece_unicode(piece: shakmaty::Piece) -> char {
     match piece.role {
-        Role::Pawn => {
-            if piece.color == ChessColor::Black {
-                'p'
-            } else {
-                '♙'
-            }
-        }
-        Role::Knight => {
-            if piece.color == ChessColor::Black {
-                '♞'
-            } else {
-                '♘'
-            }
-        }
-        Role::Bishop => {
-            if piece.color == ChessColor::Black {
-                '♝'
-            } else {
-                '♗'
-            }
-        }
-        Role::Rook => {
-            if piece.color == ChessColor::Black {
-                '♜'
-            } else {
-                '♖'
-            }
-        }
-        Role::Queen => {
-            if piece.color == ChessColor::Black {
-                '♛'
-            } else {
-                '♕'
-            }
-        }
-        Role::King => {
-            if piece.color == ChessColor::Black {
-                '♚'
-            } else {
-                '♔'
-            }
-        }
+        Role::Pawn => '♙',
+        Role::Knight => '♘',
+        Role::Bishop => '♗',
+        Role::Rook => '♖',
+        Role::Queen => '♕',
+        Role::King => '♔',
     }
 }
 
